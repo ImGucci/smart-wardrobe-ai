@@ -44,15 +44,25 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
   const apiKeyPreview = apiKeyLength > 8 
     ? `${API_KEY.substring(0, 4)}...${API_KEY.substring(apiKeyLength - 4)}`
     : '***';
+  const apiKeyPrefix = API_KEY.substring(0, Math.min(15, apiKeyLength));
   
   // OpenRouter API keys should start with "sk-or-v1-"
   const isValidFormat = API_KEY.startsWith('sk-or-v1-');
+  
+  console.log(`[OpenRouter] API key prefix: "${apiKeyPrefix}..."`);
+  console.log(`[OpenRouter] API key length: ${apiKeyLength} chars`);
+  console.log(`[OpenRouter] Format check: ${isValidFormat ? '✓ Valid (sk-or-v1-...)' : '✗ Invalid (expected sk-or-v1-...)'}`);
+  
   if (!isValidFormat) {
-    console.warn(`[OpenRouter] API key format warning: Expected "sk-or-v1-..." but got "${apiKeyPreview}". This might be an invalid OpenRouter API key.`);
-    console.warn(`[OpenRouter] Please ensure you're using an OpenRouter API key from https://openrouter.ai/keys`);
+    console.error(`[OpenRouter] ❌ API KEY FORMAT ERROR!`);
+    console.error(`[OpenRouter] Expected format: "sk-or-v1-..." (OpenRouter API key)`);
+    console.error(`[OpenRouter] Actual prefix: "${apiKeyPrefix}..."`);
+    console.error(`[OpenRouter] This is NOT a valid OpenRouter API key!`);
+    console.error(`[OpenRouter] Please get a valid key from: https://openrouter.ai/keys`);
+    throw new Error(`Invalid API key format. OpenRouter keys must start with "sk-or-v1-", but yours starts with "${apiKeyPrefix}". Please get a valid OpenRouter API key from https://openrouter.ai/keys`);
   }
   
-  console.log(`[OpenRouter] Using API key (${apiKeyLength} chars): ${apiKeyPreview}`);
+  console.log(`[OpenRouter] Using API key: ${apiKeyPreview}`);
 
   const response = await fetch(API_URL, {
     method: "POST",
@@ -82,20 +92,26 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
         }
         // Provide more helpful error messages
         if (response.status === 401) {
-          const apiKeyPrefix = API_KEY.substring(0, 10);
+          const apiKeyPrefix = API_KEY.substring(0, 15);
           let diagnosticInfo = "";
           
+          // Double-check format (should have been caught earlier, but just in case)
           if (!API_KEY.startsWith('sk-or-v1-')) {
-            diagnosticInfo = "\n\n⚠️ DIAGNOSIS: Your API key doesn't start with 'sk-or-v1-'. " +
-                           "This suggests you might be using an OpenAI key instead of an OpenRouter key. " +
-                           "Please get a valid API key from https://openrouter.ai/keys";
+            diagnosticInfo = "\n\n❌ CRITICAL: Your API key doesn't start with 'sk-or-v1-'. " +
+                           `Your key starts with: "${apiKeyPrefix}"\n` +
+                           "This is NOT a valid OpenRouter API key!\n" +
+                           "You might be using an OpenAI key or another service's key.\n" +
+                           "Please get a valid OpenRouter API key from: https://openrouter.ai/keys";
           } else {
-            diagnosticInfo = "\n\n⚠️ DIAGNOSIS: Your API key format looks correct, but OpenRouter rejected it. " +
+            diagnosticInfo = "\n\n⚠️ DIAGNOSIS: Your API key format is correct (sk-or-v1-...), but OpenRouter rejected it.\n" +
                            "Possible reasons:\n" +
                            "1. The API key is invalid or has been revoked\n" +
                            "2. The API key hasn't been activated in your OpenRouter account\n" +
                            "3. Your OpenRouter account might need verification\n" +
-                           "4. Check your OpenRouter dashboard: https://openrouter.ai/keys";
+                           "4. Check your OpenRouter dashboard: https://openrouter.ai/keys\n" +
+                           "5. Make sure you copied the ENTIRE key (should be ~70+ characters)\n" +
+                           `   Your key length: ${API_KEY.length} characters\n` +
+                           `   Key prefix: "${apiKeyPrefix}"`;
           }
           
           errorMessage = "Invalid API key. " + (errJson.error?.message || "Authentication failed.") + diagnosticInfo;
