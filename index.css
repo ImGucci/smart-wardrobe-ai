@@ -1,0 +1,9 @@
+/* 
+  This file is included to prevent 404 errors in production builds where index.css is expected.
+  Tailwind CSS is loaded via CDN in index.html for this setup.
+*/
+body {
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}

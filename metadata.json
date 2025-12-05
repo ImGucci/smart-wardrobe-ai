@@ -1,0 +1,7 @@
+{
+  "name": "Smart Wardrobe AI",
+  "description": "Your personal AI stylist. Digitize your closet, organize outfits, and get intelligent wear advice based on weather, occasion, and your body type.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
