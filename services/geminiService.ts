@@ -1,7 +1,9 @@
 import { ClothingItem, UserProfile } from "../types";
 
 // Configuration for OpenRouter
-const API_KEY = process.env.API_KEY;
+// Note: process.env.API_KEY is replaced at build time by Vite's define in vite.config.ts
+// @ts-ignore - process.env is replaced at build time, so TypeScript doesn't see it
+const API_KEY: string | undefined = process.env.API_KEY;
 const API_URL = "https://openrouter.ai/api/v1/chat/completions";
 // Using Gemini 2.0 Flash via OpenRouter (good vision support, fast, cheap/free)
 const MODEL_NAME = "google/gemini-2.0-flash-001"; 
@@ -33,8 +35,16 @@ const callWithRetry = async <T>(operation: () => Promise<T>, retries = 1, baseDe
  */
 const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 'text') => {
   if (!API_KEY) {
-    throw new Error("API Key is missing. Please check your api_key.txt or environment variables.");
+    console.error("API_KEY is missing or empty. Check Vercel environment variables.");
+    throw new Error("API Key is missing. Please check your environment variables in Vercel.");
   }
+  
+  // Debug: Log API key status (masked for security)
+  const apiKeyLength = API_KEY.length;
+  const apiKeyPreview = apiKeyLength > 8 
+    ? `${API_KEY.substring(0, 4)}...${API_KEY.substring(apiKeyLength - 4)}`
+    : '***';
+  console.log(`[OpenRouter] Using API key (${apiKeyLength} chars): ${apiKeyPreview}`);
 
   const response = await fetch(API_URL, {
     method: "POST",
@@ -61,6 +71,11 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
         const errJson = JSON.parse(errorBody);
         if (errJson.error && errJson.error.message) {
             errorMessage = errJson.error.message;
+        }
+        // Provide more helpful error messages
+        if (response.status === 401) {
+          errorMessage = "Invalid API key. Please check your API_KEY environment variable in Vercel. " + 
+                        (errJson.error?.message || "Authentication failed.");
         }
     } catch(e) {}
     throw new Error(errorMessage);
