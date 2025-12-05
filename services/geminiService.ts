@@ -39,11 +39,19 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
     throw new Error("API Key is missing. Please check your environment variables in Vercel.");
   }
   
-  // Debug: Log API key status (masked for security)
+  // Validate API key format
   const apiKeyLength = API_KEY.length;
   const apiKeyPreview = apiKeyLength > 8 
     ? `${API_KEY.substring(0, 4)}...${API_KEY.substring(apiKeyLength - 4)}`
     : '***';
+  
+  // OpenRouter API keys should start with "sk-or-v1-"
+  const isValidFormat = API_KEY.startsWith('sk-or-v1-');
+  if (!isValidFormat) {
+    console.warn(`[OpenRouter] API key format warning: Expected "sk-or-v1-..." but got "${apiKeyPreview}". This might be an invalid OpenRouter API key.`);
+    console.warn(`[OpenRouter] Please ensure you're using an OpenRouter API key from https://openrouter.ai/keys`);
+  }
+  
   console.log(`[OpenRouter] Using API key (${apiKeyLength} chars): ${apiKeyPreview}`);
 
   const response = await fetch(API_URL, {
@@ -51,7 +59,7 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
     headers: {
       "Authorization": `Bearer ${API_KEY}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": SITE_URL, // Required by OpenRouter
+      "HTTP-Referer": SITE_URL, // Required by OpenRouter (note: this is the correct header name for OpenRouter)
       "X-Title": APP_TITLE,     // Required by OpenRouter
     },
     body: JSON.stringify({
@@ -74,8 +82,23 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
         }
         // Provide more helpful error messages
         if (response.status === 401) {
-          errorMessage = "Invalid API key. Please check your API_KEY environment variable in Vercel. " + 
-                        (errJson.error?.message || "Authentication failed.");
+          const apiKeyPrefix = API_KEY.substring(0, 10);
+          let diagnosticInfo = "";
+          
+          if (!API_KEY.startsWith('sk-or-v1-')) {
+            diagnosticInfo = "\n\n⚠️ DIAGNOSIS: Your API key doesn't start with 'sk-or-v1-'. " +
+                           "This suggests you might be using an OpenAI key instead of an OpenRouter key. " +
+                           "Please get a valid API key from https://openrouter.ai/keys";
+          } else {
+            diagnosticInfo = "\n\n⚠️ DIAGNOSIS: Your API key format looks correct, but OpenRouter rejected it. " +
+                           "Possible reasons:\n" +
+                           "1. The API key is invalid or has been revoked\n" +
+                           "2. The API key hasn't been activated in your OpenRouter account\n" +
+                           "3. Your OpenRouter account might need verification\n" +
+                           "4. Check your OpenRouter dashboard: https://openrouter.ai/keys";
+          }
+          
+          errorMessage = "Invalid API key. " + (errJson.error?.message || "Authentication failed.") + diagnosticInfo;
         }
     } catch(e) {}
     throw new Error(errorMessage);
