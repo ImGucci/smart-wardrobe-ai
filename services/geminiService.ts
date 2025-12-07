@@ -349,8 +349,8 @@ export const generateTryOnVisual = async (
       const width = 800;
       canvas.width = width;
 
-      // 使用更柔和的背景色
-      ctx.fillStyle = '#f9fafb'; 
+      // 使用纯白色背景，更干净清爽
+      ctx.fillStyle = '#ffffff'; 
 
       const imgTop = new Image();
       const imgBottom = new Image();
@@ -407,7 +407,21 @@ export const generateTryOnVisual = async (
             canvas.height = totalHeight;
 
             // 4. 绘制背景
+            // 选项1: 纯白色背景（干净简洁，推荐）
+            ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, width, totalHeight);
+            
+            // 选项2: 浅色渐变背景（更柔和优雅，如需使用请取消注释并注释掉上面的纯白色）
+            // const gradient = ctx.createLinearGradient(0, 0, 0, totalHeight);
+            // gradient.addColorStop(0, '#ffffff');      // 顶部：纯白
+            // gradient.addColorStop(1, '#fafafa');      // 底部：极浅灰
+            // ctx.fillStyle = gradient;
+            // ctx.fillRect(0, 0, width, totalHeight);
+            
+            // 选项3: 其他颜色（可根据需要自定义）
+            // ctx.fillStyle = '#f5f5f5';  // 浅灰色
+            // ctx.fillStyle = '#f0f0f0';  // 稍深的浅灰
+            // ctx.fillRect(0, 0, width, totalHeight);
 
             // 5. 计算居中位置并绘制
             const topX = padding + (availableWidth - topDisplayWidth) / 2;
