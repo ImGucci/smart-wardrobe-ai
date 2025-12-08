@@ -11,6 +11,14 @@ export default defineConfig(({ mode }) => {
   // 1. Prioritize explicitly set env var (Vercel/System) - check both process.env and loadEnv
   // Vercel exposes env vars directly in process.env during build
   let finalApiKey = process.env.API_KEY || env.API_KEY || '';
+  let finalZenmuxApiKey = process.env.ZENMUX_API_KEY || env.ZENMUX_API_KEY || '';
+  let apiProvider = (process.env.API_PROVIDER || env.API_PROVIDER || 'openrouter').toLowerCase();
+  
+  // Validate API provider
+  if (apiProvider !== 'openrouter' && apiProvider !== 'zenmux') {
+    console.warn(`[Vite Config] Invalid API_PROVIDER: ${apiProvider}, defaulting to 'openrouter'`);
+    apiProvider = 'openrouter';
+  }
   
   // Debug logging (only show first/last few chars for security)
   if (finalApiKey) {
@@ -21,6 +29,15 @@ export default defineConfig(({ mode }) => {
   } else {
     console.warn('[Vite Config] API_KEY not found in environment variables');
   }
+  
+  if (finalZenmuxApiKey) {
+    const masked = finalZenmuxApiKey.length > 8 
+      ? `${finalZenmuxApiKey.substring(0, 4)}...${finalZenmuxApiKey.substring(finalZenmuxApiKey.length - 4)}`
+      : '***';
+    console.log(`[Vite Config] ZENMUX_API_KEY found (${finalZenmuxApiKey.length} chars): ${masked}`);
+  }
+  
+  console.log(`[Vite Config] API_PROVIDER: ${apiProvider}`);
   
   // 2. Fallback: Read from api_key.txt if present (Local Development only)
   // Logic: If the env var is empty or looks like a placeholder, try the file.
@@ -53,8 +70,10 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      // Safely inject the key into the client code
-      'process.env.API_KEY': JSON.stringify(finalApiKey)
+      // Safely inject the keys and config into the client code
+      'process.env.API_KEY': JSON.stringify(finalApiKey),
+      'process.env.ZENMUX_API_KEY': JSON.stringify(finalZenmuxApiKey),
+      'process.env.API_PROVIDER': JSON.stringify(apiProvider)
     },
     build: {
       target: 'esnext' // Ensure support for modern JS features

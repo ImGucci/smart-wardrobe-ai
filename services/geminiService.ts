@@ -1,12 +1,20 @@
 import { ClothingItem, UserProfile } from "../types";
 
-// Configuration for OpenRouter
-// Note: process.env.API_KEY is replaced at build time by Vite's define in vite.config.ts
+// Configuration for API Providers
+// Note: process.env variables are replaced at build time by Vite's define in vite.config.ts
 // @ts-ignore - process.env is replaced at build time, so TypeScript doesn't see it
 const API_KEY: string | undefined = process.env.API_KEY;
-const API_URL = "https://openrouter.ai/api/v1/chat/completions";
-// Using Gemini 2.0 Flash via OpenRouter (good vision support, fast, cheap/free)
-const MODEL_NAME = "google/gemini-2.0-flash-001"; 
+const ZENMUX_API_KEY: string | undefined = process.env.ZENMUX_API_KEY;
+const API_PROVIDER: string = (process.env.API_PROVIDER || 'openrouter').toLowerCase();
+
+// OpenRouter Configuration
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODEL = "google/gemini-2.0-flash-001"; 
+
+// ZenMux Configuration
+const ZENMUX_API_URL = "https://zenmux.ai/v1/chat/completions";
+const ZENMUX_TEXT_MODEL = "google/gemini-2.0-flash-001"; // For text generation
+const ZENMUX_IMAGE_MODEL = "google/gemini-3-pro-image-preview"; // For image generation
 
 const SITE_URL = "https://smartwardrobe.app"; 
 const APP_TITLE = "Smart Wardrobe AI";
@@ -28,6 +36,52 @@ const callWithRetry = async <T>(operation: () => Promise<T>, retries = 1, baseDe
     }
     throw error;
   }
+};
+
+/**
+ * Helper to call ZenMux API
+ */
+const callZenMux = async (messages: any[], model: string = ZENMUX_TEXT_MODEL) => {
+  if (!ZENMUX_API_KEY) {
+    console.error("ZENMUX_API_KEY is missing or empty. Check Vercel environment variables.");
+    throw new Error("ZenMux API Key is missing. Please check your ZENMUX_API_KEY environment variable in Vercel.");
+  }
+
+  console.log(`[ZenMux] Using model: ${model}`);
+  console.log(`[ZenMux] API key length: ${ZENMUX_API_KEY.length} chars`);
+
+  const response = await fetch(ZENMUX_API_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${ZENMUX_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: messages,
+    })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("ZenMux API Error:", response.status, errorBody);
+    let errorMessage = `ZenMux API Error (${response.status})`;
+    try {
+        const errJson = JSON.parse(errorBody);
+        if (errJson.error && errJson.error.message) {
+            errorMessage = errJson.error.message;
+        }
+        if (response.status === 401) {
+          errorMessage = "Invalid ZenMux API key. Please check your ZENMUX_API_KEY environment variable in Vercel. " + 
+                        (errJson.error?.message || "Authentication failed.");
+        }
+    } catch(e) {}
+    throw new Error(errorMessage);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || "";
+  return content;
 };
 
 /**
@@ -125,6 +179,17 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
   return content;
 };
 
+/**
+ * Unified API call function - routes to the correct provider based on configuration
+ */
+const callAPI = async (messages: any[], model?: string) => {
+  if (API_PROVIDER === 'zenmux') {
+    return await callZenMux(messages, model);
+  } else {
+    return await callOpenRouter(messages);
+  }
+};
+
 // Helper to clean JSON string (remove markdown code blocks if model adds them)
 const parseJSON = (text: string) => {
   const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -157,7 +222,7 @@ export const analyzeClothingItem = async (base64Image: string): Promise<{
       }
     ];
 
-    const responseText = await callOpenRouter(messages);
+    const responseText = await callAPI(messages);
     if (!responseText) throw new Error("No response from AI");
     
     try {
@@ -194,7 +259,7 @@ export const generateOutfitAdvice = async (
         { role: "user", content: prompt }
     ];
 
-    const responseText = await callOpenRouter(messages);
+    const responseText = await callAPI(messages);
     if (!responseText) throw new Error("No response from AI");
     
     try {
@@ -209,6 +274,168 @@ export const generateOutfitAdvice = async (
          console.error("Failed to parse AI response:", responseText);
          throw new Error("AI response was not valid JSON");
     }
+  });
+};
+
+/**
+ * Generate Digital Human Image using AI (ZenMux with gemini-3-pro-image-preview)
+ * This creates a realistic digital human wearing the recommended outfit
+ */
+export const generateDigitalHuman = async (
+  top: ClothingItem,
+  bottom: ClothingItem,
+  userProfile: UserProfile,
+  styleName: string
+): Promise<string> => {
+  if (API_PROVIDER !== 'zenmux') {
+    throw new Error("Digital human generation requires ZenMux API provider. Please set API_PROVIDER=zenmux");
+  }
+
+  return callWithRetry(async () => {
+    console.log("Generating digital human with AI...");
+    
+    // Build the prompt with user profile information
+    const prompt = `Generate a realistic full-body digital human image showing a person wearing this outfit combination.
+
+User Profile:
+- Gender: ${userProfile.gender}
+- Height: ${userProfile.height}
+- Weight: ${userProfile.weight}
+- Skin Tone: ${userProfile.skinTone}
+- Style: ${styleName}
+
+Requirements:
+1. Show a full-body view of the person wearing the top and bottom clothing items
+2. The person should match the user's profile (gender, height, weight, skin tone)
+3. The clothing should fit naturally and look realistic
+4. Use a clean, professional background (white or light gray)
+5. The image should be high quality and photorealistic
+6. The person should be standing in a natural pose, facing forward or slightly to the side
+
+Generate the image showing how this outfit looks when worn.`;
+
+    // Prepare messages with images
+    const messages: any[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: prompt
+          }
+        ]
+      }
+    ];
+
+    // Add user avatar if available
+    if (userProfile.avatarImage) {
+      messages[0].content.push({
+        type: "image_url",
+        image_url: {
+          url: `data:image/png;base64,${userProfile.avatarImage}`
+        }
+      });
+    }
+
+    // Add clothing images
+    messages[0].content.push(
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:image/png;base64,${top.image}`
+        }
+      },
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:image/png;base64,${bottom.image}`
+        }
+      }
+    );
+
+    const responseText = await callZenMux(messages, ZENMUX_IMAGE_MODEL);
+    
+    if (!responseText) {
+      throw new Error("No response from AI image generation");
+    }
+
+    console.log("[Digital Human] Processing AI response...");
+
+    // The response might be in different formats:
+    // 1. Direct data URL: "data:image/jpeg;base64,..."
+    // 2. Base64 string: "iVBORw0KGgo..."
+    // 3. JSON with image data: {"image": "base64..."}
+    // 4. JSON with content: {"content": [{"type": "image_url", "image_url": {...}}]}
+
+    // Check if it's already a data URL
+    if (responseText.startsWith('data:image')) {
+      console.log("[Digital Human] Response is data URL");
+      return responseText;
+    }
+
+    // Try to parse as JSON first
+    try {
+      const parsed = JSON.parse(responseText);
+      
+      // Check for nested content structure (Gemini format)
+      if (parsed.content && Array.isArray(parsed.content)) {
+        for (const item of parsed.content) {
+          if (item.type === 'image_url' && item.image_url?.url) {
+            const imageUrl = item.image_url.url;
+            if (imageUrl.startsWith('data:')) {
+              console.log("[Digital Human] Found image in content array");
+              return imageUrl;
+            }
+            // If it's base64 without data URL prefix
+            if (imageUrl.match(/^[A-Za-z0-9+/=]+$/)) {
+              console.log("[Digital Human] Found base64 in content array");
+              return `data:image/jpeg;base64,${imageUrl}`;
+            }
+          }
+        }
+      }
+      
+      // Check for direct image/data fields
+      if (parsed.image || parsed.data) {
+        const imageData = parsed.image || parsed.data;
+        if (imageData.startsWith('data:')) {
+          console.log("[Digital Human] Found image in JSON");
+          return imageData;
+        }
+        if (imageData.match(/^[A-Za-z0-9+/=]+$/)) {
+          console.log("[Digital Human] Found base64 in JSON");
+          return `data:image/jpeg;base64,${imageData}`;
+        }
+      }
+      
+      // Check for choices array (OpenAI format)
+      if (parsed.choices && Array.isArray(parsed.choices) && parsed.choices.length > 0) {
+        const choice = parsed.choices[0];
+        if (choice.message?.content) {
+          const content = choice.message.content;
+          if (content.startsWith('data:image')) {
+            console.log("[Digital Human] Found image in choices");
+            return content;
+          }
+        }
+      }
+    } catch (e) {
+      // Not JSON, continue to base64 check
+      console.log("[Digital Human] Response is not JSON, checking as base64");
+    }
+
+    // Check if it's a base64 string (JPEG starts with /9j/, PNG starts with iVBORw0KGgo)
+    if (responseText.startsWith('/9j/') || responseText.startsWith('iVBORw0KGgo') || 
+        responseText.match(/^[A-Za-z0-9+/=\s]+$/)) {
+      // Remove whitespace
+      const cleanBase64 = responseText.replace(/\s/g, '');
+      console.log("[Digital Human] Response is base64 string");
+      return `data:image/jpeg;base64,${cleanBase64}`;
+    }
+
+    // If we can't parse it, throw an error
+    console.error("[Digital Human] Could not parse response:", responseText.substring(0, 200));
+    throw new Error("Unable to extract image from AI response. Response format not recognized.");
   });
 };
 
@@ -330,14 +557,27 @@ function cropImageToBounds(img: HTMLImageElement, bounds: { x: number; y: number
   return canvas;
 }
 
-// 4. Generate Visual (Flat Lay Composition)
-// This uses local canvas operations, not AI generation, which is preserved.
+// 4. Generate Visual
+// If using ZenMux, generates a digital human image with AI
+// Otherwise, uses local canvas composition (flat lay)
 export const generateTryOnVisual = async (
   top: ClothingItem,
   bottom: ClothingItem,
   userProfile: UserProfile,
   styleName: string
 ): Promise<string> => {
+  // If using ZenMux, generate digital human with AI
+  if (API_PROVIDER === 'zenmux') {
+    console.log("Generating digital human with AI (ZenMux)...");
+    try {
+      return await generateDigitalHuman(top, bottom, userProfile, styleName);
+    } catch (error) {
+      console.warn("AI digital human generation failed, falling back to local composition:", error);
+      // Fall through to local composition
+    }
+  }
+  
+  // Local flat-lay composition (default for OpenRouter or fallback)
   console.log("Creating local flat-lay composition with smart cropping...");
   
   return new Promise((resolve, reject) => {

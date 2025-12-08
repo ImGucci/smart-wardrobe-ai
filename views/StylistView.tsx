@@ -135,7 +135,8 @@ export const StylistView: React.FC<StylistViewProps> = ({
          return (
             <div className="absolute inset-0 flex items-center justify-center flex-col p-6 text-center bg-gray-50">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-3"></div>
-                <p className="text-indigo-600 font-medium text-sm">Composing outfit...</p>
+                <p className="text-indigo-600 font-medium text-sm">Generating visual...</p>
+                <p className="text-indigo-400 text-xs mt-1">This may take a moment</p>
             </div>
          );
       }
