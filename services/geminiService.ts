@@ -538,13 +538,72 @@ const parseJSON = (text: string) => {
   return JSON.parse(cleaned);
 };
 
-// 1. Analyze Item
+// 1. Analyze Item - Enhanced with detailed fashion analysis
 export const analyzeClothingItem = async (base64Image: string): Promise<{ 
-  color: string; type: string; style: string; season: string; category?: string; 
+  // 基础字段（向后兼容）
+  color: string; 
+  type: string; 
+  style: string; 
+  season: string; 
+  category?: string;
+  
+  // 详细分析字段
+  name?: string;
+  sub_category?: string;
+  warmth?: string;
+  neckline?: string;
+  closure?: string;
+  dominant_color?: string;
+  color_palette?: string[];
+  pattern?: string;
+  fit?: string;
+  formality_reasoning?: string;
+  formality?: number;
+  style_tags?: string[];
 }> => {
   return callWithRetry(async () => {
     // OpenRouter Vision format expects a Data URL
     const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+    
+    const prompt = `你是一位 AI 时尚专家。你的任务是分析一张单品衣物的图片，并将其视觉特征转化为结构化的 JSON 数据。
+
+关键准则（请严格遵守）：
+
+1. 术语专业性：使用标准的中文时尚术语。
+
+2. 颜色降噪处理 (至关重要)：
+   - dominant_color：占据面积最大、决定整体基调的单一颜色。
+   - color_palette：仅提取能影响搭配决策的次要颜色。
+   - 忽略规则：绝对忽略纽扣、拉链、细小的缝线、微小的 Logo 以及光影造成的色差。
+   - 阈值：只有当某种颜色占据显著面积（>15%）或形成明显的拼色/条纹时才记录。
+
+3. 结构细节：重点识别领型和闭合方式。
+
+4. 输出格式：仅输出 JSON 代码块，不要包含任何其他文字说明。
+
+请返回以下 JSON 结构（category 字段使用 'TOP' 或 'BOTTOM'，其他字段使用中文）：
+
+{
+  "category": "TOP 或 BOTTOM",
+  "name": "简洁的描述性名称",
+  "sub_category": "具体品类，如: T恤、衬衫、卫衣、牛仔裤、休闲裤等",
+  "warmth": "薄/透气 或 常规 或 厚/保暖",
+  "neckline": "领型，如: 圆领、V领、衬衫翻领、连帽等。下装填 无",
+  "closure": "闭合方式，如: 套头、单排扣、全拉链、松紧腰等",
+  "dominant_color": "视觉主色调，如: 炭灰色、藏青色",
+  "color_palette": ["辅助配色数组，仅包含显著的拼色或条纹色，最多2个，纯色衣物可留空"],
+  "pattern": "纯色 或 条纹 或 格纹 或 印花 或 拼色 或 肌理感",
+  "fit": "修身 或 常规 或 宽松/Oversize",
+  "formality_reasoning": "一句话简述判断理由，基于领型、材质和整体整洁度分析正式度",
+  "formality": 3,
+  "style_tags": ["风格关键词数组，2到3个，如: 日系、极简、复古、街头、商务"],
+  "color": "与 dominant_color 相同",
+  "type": "与 sub_category 相同",
+  "style": "从 style_tags 中提取主要风格",
+  "season": "根据 warmth 推断：薄/透气->夏季、常规->春秋、厚/保暖->冬季"
+}
+
+注意：formality 必须是 1 到 5 之间的数字，不要加引号。`;
     
     const messages = [
       {
@@ -552,7 +611,7 @@ export const analyzeClothingItem = async (base64Image: string): Promise<{
         content: [
           {
             type: "text",
-            text: "Analyze this clothing item. Return a valid JSON object (no markdown) with exactly these keys: color, type (e.g. T-shirt), category ('TOP', 'BOTTOM', or 'SHOES'), style, season."
+            text: prompt
           },
           {
             type: "image_url",
@@ -568,7 +627,30 @@ export const analyzeClothingItem = async (base64Image: string): Promise<{
     if (!responseText) throw new Error("No response from AI");
     
     try {
-        return parseJSON(responseText);
+        const result = parseJSON(responseText);
+        console.log("AI Analysis Result (detailed):", result);
+        
+        // Ensure formality is a number if present
+        if (result.formality !== undefined) {
+          result.formality = typeof result.formality === 'string' 
+            ? parseInt(result.formality, 10) 
+            : Number(result.formality);
+          // Clamp to 1-5 range
+          if (isNaN(result.formality) || result.formality < 1) result.formality = 1;
+          if (result.formality > 5) result.formality = 5;
+        }
+        
+        // Ensure color_palette and style_tags are arrays
+        if (result.color_palette && !Array.isArray(result.color_palette)) {
+          result.color_palette = [];
+        }
+        if (result.style_tags && !Array.isArray(result.style_tags)) {
+          result.style_tags = typeof result.style_tags === 'string' 
+            ? [result.style_tags] 
+            : [];
+        }
+        
+        return result;
     } catch (e) {
         console.error("Failed to parse AI response:", responseText);
         throw new Error("AI response was not valid JSON");
@@ -576,7 +658,7 @@ export const analyzeClothingItem = async (base64Image: string): Promise<{
   });
 };
 
-// 2. Generate Advice
+// 2. Generate Advice - Enhanced with detailed clothing analysis
 export const generateOutfitAdvice = async (
   tops: ClothingItem[],
   bottoms: ClothingItem[],
@@ -584,18 +666,70 @@ export const generateOutfitAdvice = async (
   userProfile: UserProfile
 ): Promise<{ topId: string; bottomId: string; reasoning: string; styleName: string }> => {
   return callWithRetry(async () => {
-    const inventoryDescription = JSON.stringify({
-      tops: tops.map(t => ({ id: t.id, color: t.tags.color, type: t.tags.type, style: t.tags.style })),
-      bottoms: bottoms.map(b => ({ id: b.id, color: b.tags.color, type: b.tags.type, style: b.tags.style })),
-    });
+    // Build detailed inventory description using enhanced tags
+    const buildItemDetails = (item: ClothingItem) => {
+      const tags = item.tags;
+      return {
+        id: item.id,
+        // 基础信息
+        name: tags.name || tags.type || 'Unknown',
+        sub_category: tags.sub_category || tags.type,
+        // 颜色信息（使用详细分析）
+        dominant_color: tags.dominant_color || tags.color,
+        color_palette: tags.color_palette || [],
+        pattern: tags.pattern || '纯色',
+        // 结构信息
+        neckline: tags.neckline,
+        closure: tags.closure,
+        fit: tags.fit,
+        warmth: tags.warmth,
+        // 风格信息
+        formality: tags.formality,
+        formality_reasoning: tags.formality_reasoning,
+        style_tags: tags.style_tags || (tags.style ? [tags.style] : []),
+        // 向后兼容
+        color: tags.color || tags.dominant_color,
+        type: tags.type || tags.sub_category,
+        style: tags.style || (tags.style_tags?.[0] || 'Casual'),
+      };
+    };
 
-    const prompt = `
-      Act as a stylist. User: ${userProfile.gender}, ${userProfile.height}.
-      Occasion: "${context}".
-      Inventory: ${inventoryDescription}
-      Select 1 Top and 1 Bottom by exact ID.
-      Return valid JSON (no markdown) with keys: topId, bottomId, reasoning, styleName.
-    `;
+    const inventoryDescription = JSON.stringify({
+      tops: tops.map(buildItemDetails),
+      bottoms: bottoms.map(buildItemDetails),
+    }, null, 2);
+
+    const prompt = `你是一位专业的时尚搭配师。请根据用户的场景需求和衣橱库存，推荐最合适的搭配组合。
+
+用户信息：
+- 性别: ${userProfile.gender}
+- 身高: ${userProfile.height}
+- 体重: ${userProfile.weight}
+- 肤色: ${userProfile.skinTone}
+
+场景需求：
+"${context}"
+
+衣橱库存：
+${inventoryDescription}
+
+搭配原则：
+1. 考虑正式度匹配：上装和下装的 formality 评分应该协调（差距不超过2分）
+2. 颜色搭配：dominant_color 和 color_palette 要和谐，避免冲突
+3. 风格统一：style_tags 应该有一定的重叠或互补
+4. 场合适配：根据场景需求选择合适的 formality 和 style_tags
+5. 季节适宜：考虑 warmth 是否适合当前场景
+6. 版型协调：fit 要协调，避免过于极端
+
+请仔细分析每件衣物的详细特征，选择最合适的搭配组合。
+
+返回格式（仅返回 JSON，不要包含其他文字）：
+{
+  "topId": "选中的上装ID",
+  "bottomId": "选中的下装ID",
+  "reasoning": "详细的搭配理由，说明为什么选择这个组合，包括颜色、风格、正式度、场合适配等方面的分析（中文，100-200字）",
+  "styleName": "这个搭配的风格名称（如：'商务休闲', '日系简约', '街头潮流'等，2-4个字）"
+}`;
 
     const messages = [
         { role: "user", content: prompt }

@@ -45,8 +45,12 @@ export const WardrobeView: React.FC<WardrobeViewProps> = ({ items, onDelete }) =
             />
             
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-              <p className="text-white text-xs font-semibold">{item.tags.color} {item.tags.type}</p>
-              <p className="text-white/80 text-[10px]">{item.tags.style}</p>
+              <p className="text-white text-xs font-semibold">
+                {item.tags.dominant_color || item.tags.color} {item.tags.sub_category || item.tags.type}
+              </p>
+              <p className="text-white/80 text-[10px]">
+                {item.tags.style_tags?.join(' · ') || item.tags.style || 'Casual'}
+              </p>
               <button 
                 onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}
                 className="absolute top-2 right-2 bg-white/20 hover:bg-red-500 p-1.5 rounded-full text-white backdrop-blur-sm transition-colors"

@@ -216,7 +216,9 @@ export const StylistView: React.FC<StylistViewProps> = ({
                            <img src={`data:image/jpeg;base64,${part.item.image}`} className="w-8 h-8 rounded bg-white object-cover shrink-0 border border-gray-200" alt="" />
                            <div className="min-w-0">
                                <p className="text-[10px] font-bold text-gray-400">{part.label}</p>
-                               <p className="text-xs text-gray-800 truncate">{part.item.tags.color} {part.item.tags.type}</p>
+                               <p className="text-xs text-gray-800 truncate">
+                                 {part.item.tags.dominant_color || part.item.tags.color} {part.item.tags.sub_category || part.item.tags.type}
+                               </p>
                            </div>
                         </>
                     ) : (

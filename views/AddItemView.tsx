@@ -42,15 +42,18 @@ export const AddItemView: React.FC<AddItemViewProps> = ({ onAdd, onCancel }) => 
         const tags = await analyzeClothingItem(base64);
         console.log("AI Analysis Result:", tags); 
 
-        if (tags.category === 'BOTTOM') {
+        // Determine category from AI analysis
+        if (tags.category === 'BOTTOM' || tags.category === '下装') {
             setCategory(ClothingCategory.BOTTOM);
-        } else if (tags.category === 'TOP') {
+        } else if (tags.category === 'TOP' || tags.category === '上装') {
             setCategory(ClothingCategory.TOP);
         } else {
-            const typeLower = (tags.type || '').toLowerCase();
+            // Fallback: use type/sub_category to determine
+            const typeLower = (tags.type || tags.sub_category || '').toLowerCase();
             const bottomKeywords = [
                 'pants', 'jeans', 'skirt', 'shorts', 'trousers', 
-                'leggings', 'joggers', 'sweatpants', 'slacks', 'chinos', 'bottom'
+                'leggings', 'joggers', 'sweatpants', 'slacks', 'chinos', 'bottom',
+                '裤子', '牛仔裤', '短裤', '裙子', '休闲裤', '运动裤'
             ];
             if (bottomKeywords.some(keyword => typeLower.includes(keyword))) {
                 setCategory(ClothingCategory.BOTTOM);
@@ -95,12 +98,20 @@ export const AddItemView: React.FC<AddItemViewProps> = ({ onAdd, onCancel }) => 
     setAnalyzing(true);
     try {
         // Default tags
-        let finalTags = { color: 'Unknown', type: 'Clothing', style: 'Casual', season: 'All' };
+        let finalTags: any = { color: 'Unknown', type: 'Clothing', style: 'Casual', season: 'All' };
+        let finalCategory = category;
         
         try {
-             // Quick re-analyze to confirm tags on the final image
+             // Re-analyze to get detailed tags on the final image
              const freshTags = await analyzeClothingItem(image);
              finalTags = freshTags;
+             
+             // Update category based on AI analysis if available
+             if (freshTags.category === 'BOTTOM' || freshTags.category === '下装') {
+                 finalCategory = ClothingCategory.BOTTOM;
+             } else if (freshTags.category === 'TOP' || freshTags.category === '上装') {
+                 finalCategory = ClothingCategory.TOP;
+             }
         } catch (innerError) {
              console.warn("Final tag check failed, using defaults.");
         }
@@ -108,7 +119,7 @@ export const AddItemView: React.FC<AddItemViewProps> = ({ onAdd, onCancel }) => 
         const newItem: ClothingItem = {
             id: Date.now().toString(),
             image: image,
-            category, 
+            category: finalCategory, 
             tags: finalTags,
             createdAt: Date.now(),
         };
