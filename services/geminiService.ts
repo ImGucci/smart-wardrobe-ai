@@ -13,11 +13,15 @@ const API_PROVIDER: string = ((process.env as any).API_PROVIDER || 'openrouter')
 // OpenRouter Configuration
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_MODEL = "google/gemini-2.0-flash-001"; 
+const OPENROUTER_IMAGE_MODEL = "google/gemini-3-pro-image-preview"; // For image generation
 
 // ZenMux Configuration
 const ZENMUX_API_URL = "https://zenmux.ai/v1/chat/completions";
 const ZENMUX_TEXT_MODEL = "google/gemini-2.0-flash-001"; // For text generation
 const ZENMUX_IMAGE_MODEL = "google/gemini-3-pro-image-preview"; // For image generation
+
+// Common image generation model
+const IMAGE_GENERATION_MODEL = "google/gemini-3-pro-image-preview";
 
 const SITE_URL = "https://smartwardrobe.app"; 
 const APP_TITLE = "Smart Wardrobe AI";
@@ -43,6 +47,7 @@ const callWithRetry = async <T>(operation: () => Promise<T>, retries = 1, baseDe
 
 /**
  * Helper to call ZenMux API
+ * Note: ZenMux may have CORS restrictions for browser requests
  */
 const callZenMux = async (messages: any[], model: string = ZENMUX_TEXT_MODEL) => {
   if (!ZENMUX_API_KEY) {
@@ -53,44 +58,62 @@ const callZenMux = async (messages: any[], model: string = ZENMUX_TEXT_MODEL) =>
   console.log(`[ZenMux] Using model: ${model}`);
   console.log(`[ZenMux] API key length: ${ZENMUX_API_KEY.length} chars`);
 
-  const response = await fetch(ZENMUX_API_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${ZENMUX_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: messages,
-    })
-  });
+  try {
+    const response = await fetch(ZENMUX_API_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${ZENMUX_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+      })
+    });
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error("ZenMux API Error:", response.status, errorBody);
-    let errorMessage = `ZenMux API Error (${response.status})`;
-    try {
-        const errJson = JSON.parse(errorBody);
-        if (errJson.error && errJson.error.message) {
-            errorMessage = errJson.error.message;
-        }
-        if (response.status === 401) {
-          errorMessage = "Invalid ZenMux API key. Please check your ZENMUX_API_KEY environment variable in Vercel. " + 
-                        (errJson.error?.message || "Authentication failed.");
-        }
-    } catch(e) {}
-    throw new Error(errorMessage);
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("ZenMux API Error:", response.status, errorBody);
+      let errorMessage = `ZenMux API Error (${response.status})`;
+      try {
+          const errJson = JSON.parse(errorBody);
+          if (errJson.error && errJson.error.message) {
+              errorMessage = errJson.error.message;
+          }
+          if (response.status === 401) {
+            errorMessage = "Invalid ZenMux API key. Please check your ZENMUX_API_KEY environment variable in Vercel. " + 
+                          (errJson.error?.message || "Authentication failed.");
+          }
+      } catch(e) {}
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    return content;
+  } catch (error: any) {
+    // Check if it's a CORS or network error
+    const errorMessage = error?.message || '';
+    const errorName = error?.name || '';
+    
+    if (errorMessage.includes('CORS') || 
+        errorMessage.includes('Failed to fetch') || 
+        errorMessage.includes('network') ||
+        errorName === 'TypeError' ||
+        errorMessage.includes('preflight')) {
+      const corsError = new Error("ZenMux API is not accessible from browser due to CORS restrictions. Please use OpenRouter for text generation, or set up a backend proxy for ZenMux.");
+      (corsError as any).isCorsError = true;
+      throw corsError;
+    }
+    // Re-throw other errors
+    throw error;
   }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || "";
-  return content;
 };
 
 /**
  * Helper to call OpenRouter API
  */
-const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 'text') => {
+const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 'json_object' | 'text') => {
   if (!API_KEY) {
     console.error("API_KEY is missing or empty. Check Vercel environment variables.");
     throw new Error("API Key is missing. Please check your environment variables in Vercel.");
@@ -130,7 +153,7 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
       "X-Title": APP_TITLE,     // Required by OpenRouter
     },
     body: JSON.stringify({
-      model: OPENROUTER_MODEL,
+      model: model || OPENROUTER_MODEL,
       messages: messages,
       // OpenRouter/OpenAI compatibility mode often supports this, but Gemini explicitly relies on prompt for JSON usually.
       // We will try to rely on the system prompt for JSON structure.
@@ -184,10 +207,34 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
 
 /**
  * Unified API call function - routes to the correct provider based on configuration
+ * Falls back to OpenRouter if ZenMux fails due to CORS or other issues
  */
 const callAPI = async (messages: any[], model?: string) => {
   if (API_PROVIDER === 'zenmux') {
-    return await callZenMux(messages, model);
+    try {
+      return await callZenMux(messages, model);
+    } catch (error: any) {
+      // Check if it's a CORS or network error
+      const errorMessage = error?.message || '';
+      const isCorsError = error?.isCorsError || 
+                         errorMessage.includes('CORS') || 
+                         errorMessage.includes('Failed to fetch') || 
+                         errorMessage.includes('network') ||
+                         errorMessage.includes('preflight') ||
+                         error?.name === 'TypeError';
+      
+      if (isCorsError) {
+        console.warn('[API] ZenMux call failed due to CORS restrictions, automatically falling back to OpenRouter');
+        console.warn('[API] Note: ZenMux API cannot be called directly from browser. Consider using OpenRouter for all text generation.');
+        // Fall back to OpenRouter for text generation
+        if (!API_KEY) {
+          throw new Error("OpenRouter API_KEY is required for fallback. Please set API_KEY environment variable.");
+        }
+        return await callOpenRouter(messages);
+      }
+      // Re-throw other errors
+      throw error;
+    }
   } else {
     return await callOpenRouter(messages);
   }
@@ -281,8 +328,9 @@ export const generateOutfitAdvice = async (
 };
 
 /**
- * Generate Digital Human Image using AI (ZenMux with gemini-3-pro-image-preview)
+ * Generate Digital Human Image using AI (gemini-3-pro-image-preview)
  * This creates a realistic digital human wearing the recommended outfit
+ * Supports both OpenRouter and ZenMux providers
  */
 export const generateDigitalHuman = async (
   top: ClothingItem,
@@ -290,12 +338,8 @@ export const generateDigitalHuman = async (
   userProfile: UserProfile,
   styleName: string
 ): Promise<string> => {
-  if (API_PROVIDER !== 'zenmux') {
-    throw new Error("Digital human generation requires ZenMux API provider. Please set API_PROVIDER=zenmux");
-  }
-
   return callWithRetry(async () => {
-    console.log("Generating digital human with AI...");
+    console.log(`[Digital Human] Generating with ${API_PROVIDER} using ${IMAGE_GENERATION_MODEL}...`);
     
     // Build the prompt with user profile information
     const prompt = `Generate a realistic full-body digital human image showing a person wearing this outfit combination.
@@ -356,7 +400,20 @@ Generate the image showing how this outfit looks when worn.`;
       }
     );
 
-    const responseText = await callZenMux(messages, ZENMUX_IMAGE_MODEL);
+    // Use the appropriate API based on provider
+    let responseText: string;
+    if (API_PROVIDER === 'zenmux') {
+      if (!ZENMUX_API_KEY) {
+        throw new Error("ZENMUX_API_KEY is required when using ZenMux provider");
+      }
+      responseText = await callZenMux(messages, IMAGE_GENERATION_MODEL);
+    } else {
+      // Use OpenRouter
+      if (!API_KEY) {
+        throw new Error("API_KEY is required for image generation");
+      }
+      responseText = await callOpenRouter(messages, IMAGE_GENERATION_MODEL);
+    }
     
     if (!responseText) {
       throw new Error("No response from AI image generation");
@@ -561,27 +618,27 @@ function cropImageToBounds(img: HTMLImageElement, bounds: { x: number; y: number
 }
 
 // 4. Generate Visual
-// If using ZenMux, generates a digital human image with AI
-// Otherwise, uses local canvas composition (flat lay)
+// Priority: Try AI digital human generation first (using gemini-3-pro-image-preview)
+// Fallback: Use local canvas composition if AI generation fails
 export const generateTryOnVisual = async (
   top: ClothingItem,
   bottom: ClothingItem,
   userProfile: UserProfile,
   styleName: string
 ): Promise<string> => {
-  // If using ZenMux, generate digital human with AI
-  if (API_PROVIDER === 'zenmux') {
-    console.log("Generating digital human with AI (ZenMux)...");
-    try {
-      return await generateDigitalHuman(top, bottom, userProfile, styleName);
-    } catch (error) {
-      console.warn("AI digital human generation failed, falling back to local composition:", error);
-      // Fall through to local composition
-    }
+  // Always try AI digital human generation first (works with both OpenRouter and ZenMux)
+  console.log(`[Visual] Attempting AI digital human generation with ${API_PROVIDER}...`);
+  try {
+    return await generateDigitalHuman(top, bottom, userProfile, styleName);
+  } catch (error: any) {
+    const errorMessage = error?.message || '';
+    console.warn("[Visual] AI digital human generation failed:", errorMessage);
+    console.warn("[Visual] Falling back to local canvas composition...");
+    // Fall through to local composition
   }
   
-  // Local flat-lay composition (default for OpenRouter or fallback)
-  console.log("Creating local flat-lay composition with smart cropping...");
+  // Local flat-lay composition (fallback)
+  console.log("[Visual] Creating local flat-lay composition with smart cropping...");
   
   return new Promise((resolve, reject) => {
     try {

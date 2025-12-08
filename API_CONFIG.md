@@ -25,9 +25,64 @@ ZENMUX_API_KEY=your-zenmux-api-key  # ZenMux API Key (用于图片生成)
 
 | 功能 | OpenRouter | ZenMux |
 |------|-----------|--------|
-| 衣物分析 (analyzeClothingItem) | ✅ 支持 | ✅ 支持 |
-| 搭配推荐 (generateOutfitAdvice) | ✅ 支持 | ✅ 支持 |
-| 可视化生成 | 📷 本地 Canvas 合成（平铺展示） | 🤖 AI 数字人生成（真人试穿效果） |
+| 衣物分析 (analyzeClothingItem) | ✅ 支持 | ⚠️ 支持（但有 CORS 限制，会自动回退到 OpenRouter） |
+| 搭配推荐 (generateOutfitAdvice) | ✅ 支持 | ⚠️ 支持（但有 CORS 限制，会自动回退到 OpenRouter） |
+| 可视化生成 | 🤖 **AI 数字人生成**（优先使用 gemini-3-pro-image-preview）<br>📷 失败时回退到本地 Canvas 合成 | 🤖 **AI 数字人生成**（使用 gemini-3-pro-image-preview）<br>📷 失败时回退到本地 Canvas 合成 |
+
+### 可视化生成策略
+
+**无论使用哪个提供商，系统都会：**
+
+1. **优先尝试 AI 数字人生成**
+   - 使用 `google/gemini-3-pro-image-preview` 模型
+   - 根据用户 Profile（头像、身高、体重、性别、肤色）生成真实试穿效果
+   - 高质量、逼真的数字人形象
+
+2. **失败时自动回退**
+   - 如果 AI 生成失败（模型不支持、API 错误、CORS 限制等）
+   - 自动回退到本地 Canvas 合成（平铺展示）
+   - 确保功能始终可用
+
+## ⚠️ 重要提示：ZenMux CORS 限制
+
+**ZenMux API 目前不支持直接从浏览器调用**（CORS 限制）。系统已实现自动回退机制：
+
+### 自动回退机制
+
+1. **文本生成（分析、推荐）**：
+   - 如果 `API_PROVIDER=zenmux` 但遇到 CORS 错误
+   - 系统会自动回退到使用 OpenRouter
+   - 确保同时设置了 `API_KEY`（OpenRouter 的 Key）
+
+2. **图片生成（数字人）**：
+   - 如果 ZenMux 图片生成失败（CORS 或其他错误）
+   - 系统会自动回退到本地 Canvas 合成
+
+### 推荐配置
+
+**方案 1：仅使用 OpenRouter（推荐）**
+```
+API_PROVIDER=openrouter
+API_KEY=sk-or-v1-xxxxxxxxxxxxx
+```
+- ✅ 无 CORS 问题
+- ✅ 稳定可靠
+- ✅ 支持文本生成
+- ✅ **支持 AI 数字人生成**（使用 gemini-3-pro-image-preview）
+- ✅ 失败时自动回退到本地 Canvas 合成
+
+**方案 2：混合使用（需要后端代理）**
+```
+API_PROVIDER=zenmux
+API_KEY=sk-or-v1-xxxxxxxxxxxxx  # 用于回退
+ZENMUX_API_KEY=your-zenmux-key  # 需要通过后端代理调用
+```
+- ⚠️ 文本生成会回退到 OpenRouter（因为 CORS）
+- ⚠️ 图片生成需要通过后端代理（当前不支持）
+
+**方案 3：等待 ZenMux 支持 CORS**
+- 如果 ZenMux 未来支持 CORS，可以直接使用
+- 当前建议使用方案 1
 
 ## 在 Vercel 中配置
 
