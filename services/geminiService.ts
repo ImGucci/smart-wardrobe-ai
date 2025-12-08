@@ -201,7 +201,52 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || "";
+  
+  // Log the full response for debugging (especially for image generation)
+  if (model === IMAGE_GENERATION_MODEL) {
+    console.log("[OpenRouter] Image generation response structure:", JSON.stringify(data, null, 2).substring(0, 500));
+  }
+  
+  // For image generation, the response structure might be different
+  // Check multiple possible locations for the image data
+  let content = "";
+  
+  if (data.choices && data.choices.length > 0) {
+    const choice = data.choices[0];
+    
+    // Check message.content (could be string or array)
+    if (choice.message) {
+      if (typeof choice.message.content === 'string') {
+        content = choice.message.content;
+      } else if (Array.isArray(choice.message.content)) {
+        // Content might be an array with image parts
+        for (const part of choice.message.content) {
+          if (part.type === 'image_url' && part.image_url?.url) {
+            content = part.image_url.url;
+            break;
+          } else if (typeof part === 'string') {
+            content = part;
+            break;
+          }
+        }
+      }
+    }
+    
+    // Check for direct image data in other fields
+    if (!content && choice.message?.image) {
+      content = choice.message.image;
+    }
+  }
+  
+  // If still no content, check top-level fields
+  if (!content && data.image) {
+    content = data.image;
+  }
+  
+  if (!content) {
+    console.warn("[OpenRouter] No content found in response, full response:", JSON.stringify(data).substring(0, 1000));
+  }
+  
   return content;
 };
 
@@ -342,7 +387,8 @@ export const generateDigitalHuman = async (
     console.log(`[Digital Human] Generating with ${API_PROVIDER} using ${IMAGE_GENERATION_MODEL}...`);
     
     // Build the prompt with user profile information
-    const prompt = `Generate a realistic full-body digital human image showing a person wearing this outfit combination.
+    // IMPORTANT: For image generation models, we need to explicitly request image generation
+    const prompt = `You are an image generation model. Generate a realistic full-body digital human image showing a person wearing this outfit combination.
 
 User Profile:
 - Gender: ${userProfile.gender}
@@ -351,15 +397,16 @@ User Profile:
 - Skin Tone: ${userProfile.skinTone}
 - Style: ${styleName}
 
-Requirements:
-1. Show a full-body view of the person wearing the top and bottom clothing items
-2. The person should match the user's profile (gender, height, weight, skin tone)
-3. The clothing should fit naturally and look realistic
+Image Requirements:
+1. Generate a full-body photograph of a person wearing the provided top and bottom clothing items
+2. The person must match the user's profile: ${userProfile.gender}, ${userProfile.height}, ${userProfile.weight}, ${userProfile.skinTone} skin tone
+3. The clothing should fit naturally and look realistic on the person
 4. Use a clean, professional background (white or light gray)
-5. The image should be high quality and photorealistic
+5. The image must be high quality and photorealistic
 6. The person should be standing in a natural pose, facing forward or slightly to the side
+7. Show the complete outfit combination clearly
 
-Generate the image showing how this outfit looks when worn.`;
+IMPORTANT: You must generate and return an image, not a text description. Generate a realistic photograph showing how this outfit looks when worn by a person matching the user's profile.`;
 
     // Prepare messages with images
     const messages: any[] = [
@@ -412,25 +459,41 @@ Generate the image showing how this outfit looks when worn.`;
       if (!API_KEY) {
         throw new Error("API_KEY is required for image generation");
       }
+      console.log(`[Digital Human] Calling OpenRouter with model: ${IMAGE_GENERATION_MODEL}`);
       responseText = await callOpenRouter(messages, IMAGE_GENERATION_MODEL);
     }
     
-    if (!responseText) {
-      throw new Error("No response from AI image generation");
+    console.log(`[Digital Human] Received response, length: ${responseText?.length || 0} chars`);
+    console.log(`[Digital Human] Response preview: ${responseText?.substring(0, 200) || 'empty'}`);
+    
+    if (!responseText || responseText.trim().length === 0) {
+      throw new Error("No response from AI image generation - response was empty");
     }
 
     console.log("[Digital Human] Processing AI response...");
 
     // The response might be in different formats:
     // 1. Direct data URL: "data:image/jpeg;base64,..."
-    // 2. Base64 string: "iVBORw0KGgo..."
+    // 2. Base64 string: "iVBORw0KGgo..." or "/9j/..."
     // 3. JSON with image data: {"image": "base64..."}
     // 4. JSON with content: {"content": [{"type": "image_url", "image_url": {...}}]}
+    // 5. Text description (if model didn't generate image) - we need to detect this
 
     // Check if it's already a data URL
     if (responseText.startsWith('data:image')) {
       console.log("[Digital Human] Response is data URL");
       return responseText;
+    }
+    
+    // Check if response looks like a text description (not an image)
+    // If it contains common text patterns, it might be a description instead of image data
+    const textIndicators = ['sorry', 'cannot', 'unable', 'error', 'description', 'text'];
+    const lowerResponse = responseText.toLowerCase().substring(0, 200);
+    if (textIndicators.some(indicator => lowerResponse.includes(indicator)) && 
+        !responseText.match(/^[A-Za-z0-9+/=\s]+$/)) {
+      console.warn("[Digital Human] Response appears to be text description, not image data");
+      console.warn("[Digital Human] Response preview:", responseText.substring(0, 500));
+      throw new Error("AI returned text description instead of image. The model may not support image generation or the prompt needs adjustment.");
     }
 
     // Try to parse as JSON first
