@@ -111,6 +111,51 @@ const callZenMux = async (messages: any[], model: string = ZENMUX_TEXT_MODEL) =>
 };
 
 /**
+ * Recursively search for image data in any object/array structure
+ */
+const findImageData = (obj: any, path: string = ''): string | null => {
+  if (!obj || typeof obj !== 'object') return null;
+  
+  // Check common image field names
+  const imageFields = ['inline_data', 'image_url', 'image', 'image_data', 'data', 'url'];
+  for (const field of imageFields) {
+    if (obj[field]) {
+      const value = obj[field];
+      if (typeof value === 'string' && (value.startsWith('data:image') || value.startsWith('/9j/') || value.startsWith('iVBORw0KGgo'))) {
+        console.log(`[Image Search] Found image at path: ${path}.${field}`);
+        return value;
+      }
+      if (typeof value === 'object' && value.data) {
+        const mimeType = value.mime_type || 'image/jpeg';
+        console.log(`[Image Search] Found image at path: ${path}.${field}.data`);
+        return `data:${mimeType};base64,${value.data}`;
+      }
+      if (typeof value === 'object' && value.url) {
+        console.log(`[Image Search] Found image at path: ${path}.${field}.url`);
+        return value.url;
+      }
+    }
+  }
+  
+  // Recursively search in arrays and objects
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const result = findImageData(obj[i], `${path}[${i}]`);
+      if (result) return result;
+    }
+  } else {
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key) && key !== 'reasoning' && key !== 'text') {
+        const result = findImageData(obj[key], path ? `${path}.${key}` : key);
+        if (result) return result;
+      }
+    }
+  }
+  
+  return null;
+};
+
+/**
  * Helper to call OpenRouter API
  */
 const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 'json_object' | 'text') => {
@@ -144,7 +189,7 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
   
   console.log(`[OpenRouter] Using API key: ${apiKeyPreview}`);
 
-  // For image generation models, we need to specify responseModalities
+  // For image generation models, we need to specify modalities (OpenRouter format)
   const isImageGeneration = model === IMAGE_GENERATION_MODEL;
   
   const requestBody: any = {
@@ -152,12 +197,13 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
     messages: messages,
   };
   
-  // Add generationConfig for image generation models
+  // Add modalities for image generation models (OpenRouter format)
+  // According to OpenRouter docs: https://openrouter.ai/google/gemini-3-pro-image-preview/api
+  // Use "modalities": ["image", "text"] to request image generation
   if (isImageGeneration) {
-    requestBody.generationConfig = {
-      responseModalities: ["IMAGE"]  // Request image generation
-    };
-    console.log("[OpenRouter] Adding generationConfig for image generation");
+    requestBody.modalities = ["image", "text"];  // OpenRouter format for image generation
+    console.log("[OpenRouter] Adding modalities for image generation:", requestBody.modalities);
+    console.log("[OpenRouter] Request body (first 2000 chars):", JSON.stringify(requestBody).substring(0, 2000));
   }
   
   const response = await fetch(OPENROUTER_API_URL, {
@@ -214,7 +260,11 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
   
   // Log the full response for debugging (especially for image generation)
   if (model === IMAGE_GENERATION_MODEL) {
-    console.log("[OpenRouter] Image generation response structure:", JSON.stringify(data, null, 2).substring(0, 1000));
+    // Log full response structure (not truncated)
+    console.log("[OpenRouter] Full image generation response:", JSON.stringify(data, null, 2));
+    // Also log response size
+    const responseSize = JSON.stringify(data).length;
+    console.log(`[OpenRouter] Response size: ${responseSize} characters`);
   }
   
   // For image generation, the response structure might be different
@@ -225,20 +275,44 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
     const choice = data.choices[0];
     
     // Check message.content (could be string or array)
+    // According to OpenRouter docs, images are returned as base64-encoded data URLs in assistant message
     if (choice.message) {
       if (typeof choice.message.content === 'string') {
         content = choice.message.content;
+        // Check if it's a data URL (image)
+        if (content.startsWith('data:image')) {
+          console.log("[OpenRouter] Found image data URL in message.content (string)");
+        }
       } else if (Array.isArray(choice.message.content)) {
         // Content might be an array with image parts
-        for (const part of choice.message.content) {
+        console.log(`[OpenRouter] message.content is array with ${choice.message.content.length} items`);
+        for (let i = 0; i < choice.message.content.length; i++) {
+          const part = choice.message.content[i];
+          console.log(`[OpenRouter] content[${i}] type:`, typeof part, part?.type || 'no type');
+          
+          // Check for image_url type
           if (part.type === 'image_url' && part.image_url?.url) {
             content = part.image_url.url;
+            console.log("[OpenRouter] Found image in content array (image_url type)");
             break;
-          } else if (part.type === 'image' && part.image) {
+          }
+          // Check for image type
+          if (part.type === 'image' && part.image) {
             content = part.image;
+            console.log("[OpenRouter] Found image in content array (image type)");
             break;
-          } else if (typeof part === 'string') {
+          }
+          // Check if part is a string (could be data URL)
+          if (typeof part === 'string' && part.startsWith('data:image')) {
             content = part;
+            console.log("[OpenRouter] Found image data URL in content array (string)");
+            break;
+          }
+          // Check if part is just a string (might be base64)
+          if (typeof part === 'string' && part.length > 100) {
+            // Could be base64 image data
+            content = part;
+            console.log("[OpenRouter] Found potential image data in content array (long string)");
             break;
           }
         }
@@ -264,6 +338,66 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
           if (part.type === 'image' && part.data) {
             content = part.data;
             break;
+          }
+        }
+      }
+      
+      // Check reasoning_details array (Gemini 3 Pro may put images here)
+      if (!content && choice.message.reasoning_details && Array.isArray(choice.message.reasoning_details)) {
+        console.log(`[OpenRouter] Checking reasoning_details array (length: ${choice.message.reasoning_details.length})`);
+        for (let i = 0; i < choice.message.reasoning_details.length; i++) {
+          const detail = choice.message.reasoning_details[i];
+          console.log(`[OpenRouter] reasoning_details[${i}] type: ${detail.type}, keys:`, Object.keys(detail));
+          
+          // Check all possible image types
+          if (detail.type === 'image' || 
+              detail.type === 'image_url' || 
+              detail.type === 'reasoning.image' ||
+              detail.type?.includes('image')) {
+            console.log(`[OpenRouter] Found image type in reasoning_details[${i}]`);
+            if (detail.inline_data && detail.inline_data.data) {
+              const mimeType = detail.inline_data.mime_type || 'image/jpeg';
+              content = `data:${mimeType};base64,${detail.inline_data.data}`;
+              console.log("[OpenRouter] Found image in reasoning_details.inline_data");
+              break;
+            }
+            if (detail.image_url && detail.image_url.url) {
+              content = detail.image_url.url;
+              console.log("[OpenRouter] Found image in reasoning_details.image_url");
+              break;
+            }
+            if (detail.data) {
+              content = detail.data;
+              console.log("[OpenRouter] Found image in reasoning_details.data");
+              break;
+            }
+            if (detail.url) {
+              content = detail.url;
+              console.log("[OpenRouter] Found image in reasoning_details.url");
+              break;
+            }
+          }
+          
+          // Check for inline_data in any detail (regardless of type)
+          if (detail.inline_data && detail.inline_data.data) {
+            const mimeType = detail.inline_data.mime_type || 'image/jpeg';
+            content = `data:${mimeType};base64,${detail.inline_data.data}`;
+            console.log(`[OpenRouter] Found image in reasoning_details[${i}].inline_data (type: ${detail.type})`);
+            break;
+          }
+          
+          // Check nested parts in reasoning_details
+          if (detail.parts && Array.isArray(detail.parts)) {
+            console.log(`[OpenRouter] Checking reasoning_details[${i}].parts (length: ${detail.parts.length})`);
+            for (const part of detail.parts) {
+              if (part.inline_data && part.inline_data.data) {
+                const mimeType = part.inline_data.mime_type || 'image/jpeg';
+                content = `data:${mimeType};base64,${part.inline_data.data}`;
+                console.log("[OpenRouter] Found image in reasoning_details.parts.inline_data");
+                break;
+              }
+            }
+            if (content) break;
           }
         }
       }
@@ -309,29 +443,55 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
     content = data.data;
   }
   
+  // Last resort: recursively search the entire response for image data
+  if (!content && isImageGeneration) {
+    console.log("[OpenRouter] Recursively searching response for image data...");
+    const foundImage = findImageData(data, 'response');
+    if (foundImage) {
+      content = foundImage;
+      console.log("[OpenRouter] Found image data via recursive search");
+    }
+  }
+  
   if (!content && isImageGeneration) {
     console.warn("[OpenRouter] No image content found in response");
     console.warn("[OpenRouter] Full response keys:", Object.keys(data));
     if (data.choices && data.choices[0]) {
       console.warn("[OpenRouter] Choice keys:", Object.keys(data.choices[0]));
       if (data.choices[0].message) {
-        console.warn("[OpenRouter] Message keys:", Object.keys(data.choices[0].message));
-        // Log message content structure
-        if (data.choices[0].message.content) {
-          console.warn("[OpenRouter] Message content type:", typeof data.choices[0].message.content);
-          if (Array.isArray(data.choices[0].message.content)) {
-            console.warn("[OpenRouter] Message content array length:", data.choices[0].message.content.length);
-            data.choices[0].message.content.forEach((part: any, idx: number) => {
-              console.warn(`[OpenRouter] Content part ${idx}:`, typeof part, part?.type || 'no type');
+        const message = data.choices[0].message;
+        console.warn("[OpenRouter] Message keys:", Object.keys(message));
+        
+        // Log all message fields in detail
+        Object.keys(message).forEach(key => {
+          const value = message[key];
+          if (value === null || value === undefined) {
+            console.warn(`[OpenRouter] Message.${key}:`, value);
+          } else if (typeof value === 'string') {
+            console.warn(`[OpenRouter] Message.${key} (string, length ${value.length}):`, value.substring(0, 200));
+          } else if (Array.isArray(value)) {
+            console.warn(`[OpenRouter] Message.${key} (array, length ${value.length}):`, JSON.stringify(value).substring(0, 1000));
+            // Check each item in the array
+            value.forEach((item: any, idx: number) => {
+              if (item && typeof item === 'object') {
+                console.warn(`[OpenRouter] Message.${key}[${idx}] keys:`, Object.keys(item));
+                // Check for image data in this item
+                if (item.inline_data) {
+                  console.warn(`[OpenRouter] Found inline_data in ${key}[${idx}]:`, Object.keys(item.inline_data));
+                }
+                if (item.image_url) {
+                  console.warn(`[OpenRouter] Found image_url in ${key}[${idx}]:`, item.image_url);
+                }
+              }
             });
+          } else if (typeof value === 'object') {
+            console.warn(`[OpenRouter] Message.${key} (object) keys:`, Object.keys(value));
           }
-        }
-        if (data.choices[0].message.parts) {
-          console.warn("[OpenRouter] Message parts:", JSON.stringify(data.choices[0].message.parts).substring(0, 500));
-        }
+        });
       }
     }
-    console.warn("[OpenRouter] Full response (first 3000 chars):", JSON.stringify(data).substring(0, 3000));
+    // Log full response for deep inspection
+    console.warn("[OpenRouter] Full response JSON:", JSON.stringify(data, null, 2));
   }
   
   return content;
