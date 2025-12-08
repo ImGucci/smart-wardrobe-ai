@@ -121,7 +121,7 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
   
   console.log(`[OpenRouter] Using API key: ${apiKeyPreview}`);
 
-  const response = await fetch(API_URL, {
+  const response = await fetch(OPENROUTER_API_URL, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${API_KEY}`,
@@ -130,7 +130,7 @@ const callOpenRouter = async (messages: any[], responseFormat?: 'json_object' | 
       "X-Title": APP_TITLE,     // Required by OpenRouter
     },
     body: JSON.stringify({
-      model: MODEL_NAME,
+      model: OPENROUTER_MODEL,
       messages: messages,
       // OpenRouter/OpenAI compatibility mode often supports this, but Gemini explicitly relies on prompt for JSON usually.
       // We will try to rely on the system prompt for JSON structure.
