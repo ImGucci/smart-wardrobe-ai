@@ -71,9 +71,10 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       // Safely inject the keys and config into the client code
-      'process.env.API_KEY': JSON.stringify(finalApiKey),
-      'process.env.ZENMUX_API_KEY': JSON.stringify(finalZenmuxApiKey),
-      'process.env.API_PROVIDER': JSON.stringify(apiProvider)
+      // Use empty string instead of undefined to avoid issues
+      'process.env.API_KEY': JSON.stringify(finalApiKey || ''),
+      'process.env.ZENMUX_API_KEY': JSON.stringify(finalZenmuxApiKey || ''),
+      'process.env.API_PROVIDER': JSON.stringify(apiProvider || 'openrouter')
     },
     build: {
       target: 'esnext' // Ensure support for modern JS features

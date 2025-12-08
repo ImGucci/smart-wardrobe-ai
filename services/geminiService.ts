@@ -2,10 +2,13 @@ import { ClothingItem, UserProfile } from "../types";
 
 // Configuration for API Providers
 // Note: process.env variables are replaced at build time by Vite's define in vite.config.ts
+// These will be replaced with string literals during build (e.g., "sk-or-v1-xxx" or "")
 // @ts-ignore - process.env is replaced at build time, so TypeScript doesn't see it
-const API_KEY: string | undefined = process.env.API_KEY;
-const ZENMUX_API_KEY: string | undefined = process.env.ZENMUX_API_KEY;
-const API_PROVIDER: string = (process.env.API_PROVIDER || 'openrouter').toLowerCase();
+const API_KEY: string | undefined = (process.env as any).API_KEY || undefined;
+// @ts-ignore
+const ZENMUX_API_KEY: string | undefined = (process.env as any).ZENMUX_API_KEY || undefined;
+// @ts-ignore
+const API_PROVIDER: string = ((process.env as any).API_PROVIDER || 'openrouter').toLowerCase();
 
 // OpenRouter Configuration
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
