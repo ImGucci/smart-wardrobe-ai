@@ -144,6 +144,22 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
   
   console.log(`[OpenRouter] Using API key: ${apiKeyPreview}`);
 
+  // For image generation models, we need to specify responseModalities
+  const isImageGeneration = model === IMAGE_GENERATION_MODEL;
+  
+  const requestBody: any = {
+    model: model || OPENROUTER_MODEL,
+    messages: messages,
+  };
+  
+  // Add generationConfig for image generation models
+  if (isImageGeneration) {
+    requestBody.generationConfig = {
+      responseModalities: ["IMAGE"]  // Request image generation
+    };
+    console.log("[OpenRouter] Adding generationConfig for image generation");
+  }
+  
   const response = await fetch(OPENROUTER_API_URL, {
     method: "POST",
     headers: {
@@ -152,13 +168,7 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
       "HTTP-Referer": SITE_URL, // Required by OpenRouter (note: this is the correct header name for OpenRouter)
       "X-Title": APP_TITLE,     // Required by OpenRouter
     },
-    body: JSON.stringify({
-      model: model || OPENROUTER_MODEL,
-      messages: messages,
-      // OpenRouter/OpenAI compatibility mode often supports this, but Gemini explicitly relies on prompt for JSON usually.
-      // We will try to rely on the system prompt for JSON structure.
-      // response_format: responseFormat === 'json_object' ? { type: "json_object" } : undefined 
-    })
+    body: JSON.stringify(requestBody)
   });
 
   if (!response.ok) {
@@ -204,7 +214,7 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
   
   // Log the full response for debugging (especially for image generation)
   if (model === IMAGE_GENERATION_MODEL) {
-    console.log("[OpenRouter] Image generation response structure:", JSON.stringify(data, null, 2).substring(0, 500));
+    console.log("[OpenRouter] Image generation response structure:", JSON.stringify(data, null, 2).substring(0, 1000));
   }
   
   // For image generation, the response structure might be different
@@ -224,27 +234,104 @@ const callOpenRouter = async (messages: any[], model?: string, responseFormat?: 
           if (part.type === 'image_url' && part.image_url?.url) {
             content = part.image_url.url;
             break;
+          } else if (part.type === 'image' && part.image) {
+            content = part.image;
+            break;
           } else if (typeof part === 'string') {
             content = part;
             break;
           }
         }
       }
+      
+      // Check for image in message.parts (Gemini native format)
+      if (!content && choice.message.parts && Array.isArray(choice.message.parts)) {
+        for (const part of choice.message.parts) {
+          // Check inline_data (base64 image data)
+          if (part.inline_data && part.inline_data.data) {
+            const mimeType = part.inline_data.mime_type || 'image/jpeg';
+            content = `data:${mimeType};base64,${part.inline_data.data}`;
+            console.log("[OpenRouter] Found image in message.parts.inline_data");
+            break;
+          }
+          // Check image_url
+          if (part.image_url && part.image_url.url) {
+            content = part.image_url.url;
+            console.log("[OpenRouter] Found image in message.parts.image_url");
+            break;
+          }
+          // Check if part itself is an image object
+          if (part.type === 'image' && part.data) {
+            content = part.data;
+            break;
+          }
+        }
+      }
+      
+      // Check for image in message (direct fields)
+      if (!content && choice.message.image) {
+        content = choice.message.image;
+      }
+      if (!content && choice.message.image_url) {
+        content = choice.message.image_url;
+      }
+      if (!content && choice.message.image_data) {
+        content = choice.message.image_data;
+      }
     }
     
-    // Check for direct image data in other fields
-    if (!content && choice.message?.image) {
-      content = choice.message.image;
+    // Check choice-level fields
+    if (!content && choice.image) {
+      content = choice.image;
+    }
+    if (!content && choice.image_url) {
+      content = choice.image_url;
+    }
+    if (!content && choice.image_data) {
+      content = choice.image_data;
     }
   }
   
-  // If still no content, check top-level fields
+  // Check top-level fields
   if (!content && data.image) {
     content = data.image;
   }
+  if (!content && data.image_url) {
+    content = data.image_url;
+  }
+  if (!content && data.image_data) {
+    content = data.image_data;
+  }
   
-  if (!content) {
-    console.warn("[OpenRouter] No content found in response, full response:", JSON.stringify(data).substring(0, 1000));
+  // For Gemini image generation, check if there's a separate image field in the response
+  // Some models return images in a different structure
+  if (!content && data.data && typeof data.data === 'string') {
+    content = data.data;
+  }
+  
+  if (!content && isImageGeneration) {
+    console.warn("[OpenRouter] No image content found in response");
+    console.warn("[OpenRouter] Full response keys:", Object.keys(data));
+    if (data.choices && data.choices[0]) {
+      console.warn("[OpenRouter] Choice keys:", Object.keys(data.choices[0]));
+      if (data.choices[0].message) {
+        console.warn("[OpenRouter] Message keys:", Object.keys(data.choices[0].message));
+        // Log message content structure
+        if (data.choices[0].message.content) {
+          console.warn("[OpenRouter] Message content type:", typeof data.choices[0].message.content);
+          if (Array.isArray(data.choices[0].message.content)) {
+            console.warn("[OpenRouter] Message content array length:", data.choices[0].message.content.length);
+            data.choices[0].message.content.forEach((part: any, idx: number) => {
+              console.warn(`[OpenRouter] Content part ${idx}:`, typeof part, part?.type || 'no type');
+            });
+          }
+        }
+        if (data.choices[0].message.parts) {
+          console.warn("[OpenRouter] Message parts:", JSON.stringify(data.choices[0].message.parts).substring(0, 500));
+        }
+      }
+    }
+    console.warn("[OpenRouter] Full response (first 3000 chars):", JSON.stringify(data).substring(0, 3000));
   }
   
   return content;
